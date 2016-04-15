@@ -690,12 +690,16 @@ func (controller *Controller) registerTunnel(tunnel *Tunnel) (int, bool) {
 	}
 	// Perform a final check just in case we've established
 	// a duplicate connection.
-	for _, activeTunnel := range controller.tunnels {
-		if activeTunnel.serverEntry.IpAddress == tunnel.serverEntry.IpAddress {
-			NoticeAlert("duplicate tunnel: %s", tunnel.serverEntry.IpAddress)
-			return len(controller.tunnels), false
+	// ** PERFORMANCE TESTING HACK **
+	/*
+		for _, activeTunnel := range controller.tunnels {
+			if activeTunnel.serverEntry.IpAddress == tunnel.serverEntry.IpAddress {
+				NoticeAlert("duplicate tunnel: %s", tunnel.serverEntry.IpAddress)
+				return len(controller.tunnels), false
+			}
 		}
-	}
+	*/
+	// ** PERFORMANCE TESTING HACK **
 	controller.establishedOnce = true
 	controller.tunnels = append(controller.tunnels, tunnel)
 	NoticeTunnels(len(controller.tunnels))
@@ -1061,9 +1065,13 @@ loop:
 		}
 
 		// There may already be a tunnel to this candidate. If so, skip it.
-		if controller.isActiveTunnelServerEntry(candidateServerEntry.serverEntry) {
-			continue
-		}
+		// ** PERFORMANCE TESTING HACK **
+		/*
+			if controller.isActiveTunnelServerEntry(candidateServerEntry.serverEntry) {
+				continue
+			}
+		*/
+		// ** PERFORMANCE TESTING HACK **
 
 		tunnel, err := EstablishTunnel(
 			controller.config,

@@ -509,7 +509,10 @@ func (iterator *ServerEntryIterator) Next() (serverEntry *ServerEntry, err error
 
 	if iterator.isTargetServerEntryIterator {
 		if iterator.hasNextTargetServerEntry {
-			iterator.hasNextTargetServerEntry = false
+			// ** PERFORMANCE TESTING HACK **
+			// iterator.hasNextTargetServerEntry = false
+			// ** PERFORMANCE TESTING HACK **
+
 			return MakeCompatibleServerEntry(iterator.targetServerEntry), nil
 		}
 		return nil, nil
