@@ -20,6 +20,7 @@
 package server
 
 import (
+	"fmt"
 	"io"
 	"log/syslog"
 	"os"
@@ -69,20 +70,19 @@ func NewLogWriter() *io.PipeWriter {
 }
 
 var log *ContextLogger
+var fail2BanFormat string
+var fail2BanWriter *syslog.Writer
 
 // InitLogging configures a logger according to the specified
 // config params. If not called, the default logger set by the
 // package init() is used.
+// When configured, InitLogging also establishes a local syslog
+// logger specifically for fail2ban integration.
 // Concurrenty note: should only be called from the main
 // goroutine.
 func InitLogging(config *Config) error {
 
-	logLevel := DEFAULT_LOG_LEVEL
-	if config.LogLevel != "" {
-		logLevel = config.LogLevel
-	}
-
-	level, err := logrus.ParseLevel(logLevel)
+	level, err := logrus.ParseLevel(config.LogLevel)
 	if err != nil {
 		return psiphon.ContextError(err)
 	}
@@ -91,14 +91,10 @@ func InitLogging(config *Config) error {
 
 	var syslogHook *logrus_syslog.SyslogHook
 
-	if config.SyslogAddress != "" {
+	if config.SyslogFacility != "" {
 
 		syslogHook, err = logrus_syslog.NewSyslogHook(
-			"udp",
-			config.SyslogAddress,
-			getSyslogPriority(config),
-			config.SyslogTag)
-
+			"", "", getSyslogPriority(config), config.SyslogTag)
 		if err != nil {
 			return psiphon.ContextError(err)
 		}
@@ -115,7 +111,27 @@ func InitLogging(config *Config) error {
 		},
 	}
 
+	if config.Fail2BanFormat != "" {
+		fail2BanFormat = config.Fail2BanFormat
+		fail2BanWriter, err = syslog.Dial(
+			"", "", syslog.LOG_AUTH|syslog.LOG_INFO, config.SyslogTag)
+		if err != nil {
+			return psiphon.ContextError(err)
+		}
+	}
+
 	return nil
+}
+
+// LogFail2Ban logs a message to the local syslog service AUTH
+// facility with INFO severity using the format specified by
+// config.Fail2BanFormat and the given client IP address. This
+// is for integration with fail2ban for blocking abusive
+// clients by source IP address. When set, the tag in
+// config.SyslogTag is used.
+func LogFail2Ban(clientIPAddress string) {
+	fail2BanWriter.Info(
+		fmt.Sprintf(fail2BanFormat, clientIPAddress))
 }
 
 // getSyslogPriority determines golang's syslog "priority" value
@@ -126,26 +142,26 @@ func getSyslogPriority(config *Config) syslog.Priority {
 	severity := syslog.LOG_DEBUG
 
 	facilityCodes := map[string]syslog.Priority{
-		"KERN":     syslog.LOG_KERN,
-		"USER":     syslog.LOG_USER,
-		"MAIL":     syslog.LOG_MAIL,
-		"DAEMON":   syslog.LOG_DAEMON,
-		"AUTH":     syslog.LOG_AUTH,
-		"SYSLOG":   syslog.LOG_SYSLOG,
-		"LPR":      syslog.LOG_LPR,
-		"NEWS":     syslog.LOG_NEWS,
-		"UUCP":     syslog.LOG_UUCP,
-		"CRON":     syslog.LOG_CRON,
-		"AUTHPRIV": syslog.LOG_AUTHPRIV,
-		"FTP":      syslog.LOG_FTP,
-		"LOCAL0":   syslog.LOG_LOCAL0,
-		"LOCAL1":   syslog.LOG_LOCAL1,
-		"LOCAL2":   syslog.LOG_LOCAL2,
-		"LOCAL3":   syslog.LOG_LOCAL3,
-		"LOCAL4":   syslog.LOG_LOCAL4,
-		"LOCAL5":   syslog.LOG_LOCAL5,
-		"LOCAL6":   syslog.LOG_LOCAL6,
-		"LOCAL7":   syslog.LOG_LOCAL7,
+		"kern":     syslog.LOG_KERN,
+		"user":     syslog.LOG_USER,
+		"mail":     syslog.LOG_MAIL,
+		"daemon":   syslog.LOG_DAEMON,
+		"auth":     syslog.LOG_AUTH,
+		"syslog":   syslog.LOG_SYSLOG,
+		"lpr":      syslog.LOG_LPR,
+		"news":     syslog.LOG_NEWS,
+		"uucp":     syslog.LOG_UUCP,
+		"cron":     syslog.LOG_CRON,
+		"authpriv": syslog.LOG_AUTHPRIV,
+		"ftp":      syslog.LOG_FTP,
+		"local0":   syslog.LOG_LOCAL0,
+		"local1":   syslog.LOG_LOCAL1,
+		"local2":   syslog.LOG_LOCAL2,
+		"local3":   syslog.LOG_LOCAL3,
+		"local4":   syslog.LOG_LOCAL4,
+		"local5":   syslog.LOG_LOCAL5,
+		"local6":   syslog.LOG_LOCAL6,
+		"local7":   syslog.LOG_LOCAL7,
 	}
 
 	facility, ok := facilityCodes[config.SyslogFacility]

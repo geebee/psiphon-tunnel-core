@@ -26,6 +26,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -38,7 +39,8 @@ import (
 const (
 	SERVER_CONFIG_FILENAME                 = "psiphon-server.config"
 	SERVER_ENTRY_FILENAME                  = "serverEntry.dat"
-	DEFAULT_LOG_LEVEL                      = "Info"
+	DEFAULT_LOG_LEVEL                      = "info"
+	DEFAULT_SYSLOG_TAG                     = "psiphon-server"
 	DEFAULT_GEO_IP_DATABASE_FILENAME       = "GeoLite2-City.mmdb"
 	DEFAULT_SERVER_IP_ADDRESS              = "127.0.0.1"
 	WEB_SERVER_SECRET_BYTE_LENGTH          = 32
@@ -53,74 +55,261 @@ const (
 	DEFAULT_SSH_SERVER_PORT                = 2222
 	SSH_HANDSHAKE_TIMEOUT                  = 30 * time.Second
 	SSH_CONNECTION_READ_DEADLINE           = 5 * time.Minute
+	SSH_THROTTLED_PORT_FORWARD_MAX_COPY    = 32 * 1024
 	SSH_OBFUSCATED_KEY_BYTE_LENGTH         = 32
 	DEFAULT_OBFUSCATED_SSH_SERVER_PORT     = 3333
-	REDIS_POOL_MAX_IDLE                    = 5
+	REDIS_POOL_MAX_IDLE                    = 50
 	REDIS_POOL_MAX_ACTIVE                  = 1000
 	REDIS_POOL_IDLE_TIMEOUT                = 5 * time.Minute
 )
 
 // TODO: break config into sections (sub-structs)
 
+// Config specifies the configuration and behavior of a Psiphon
+// server.
 type Config struct {
-	LogLevel                string
-	SyslogAddress           string
-	SyslogFacility          string
-	SyslogTag               string
-	DiscoveryValueHMACKey   string
-	GeoIPDatabaseFilename   string
-	ServerIPAddress         string
-	WebServerPort           int
-	WebServerSecret         string
-	WebServerCertificate    string
-	WebServerPrivateKey     string
-	SSHPrivateKey           string
-	SSHServerVersion        string
-	SSHUserName             string
-	SSHPassword             string
-	SSHServerPort           int
-	ObfuscatedSSHKey        string
+
+	// LogLevel specifies the log level. Valid values are:
+	// panic, fatal, error, warn, info, debug
+	LogLevel string
+
+	// SyslogFacility specifies the syslog facility to log to.
+	// When set, the local syslog service is used for message
+	// logging.
+	// Valid values include: "user", "local0", "local1", etc.
+	SyslogFacility string
+
+	// SyslogTag specifies an optional tag for syslog log
+	// messages. The default tag is "psiphon-server". The
+	// fail2ban logs, if enabled, also use this tag.
+	SyslogTag string
+
+	// Fail2BanFormat is a string format specifier for the
+	// log message format to use for fail2ban integration for
+	// blocking abusive clients by source IP address.
+	// When set, logs with this format are made to the AUTH
+	// facility with INFO severity in the local syslog server
+	// if clients fail to authenticate.
+	// The client's IP address is included with the log message.
+	// An example format specifier, which should be compatible
+	// with default SSH fail2ban configuration, is
+	// "Authentication failure for psiphon-client from %s".
+	Fail2BanFormat string
+
+	// DiscoveryValueHMACKey is the network-wide secret value
+	// used to determine a unique discovery strategy.
+	DiscoveryValueHMACKey string
+
+	// GeoIPDatabaseFilename is the path of the GeoIP2/GeoLite2
+	// MaxMind database file. when blank, no GeoIP lookups are
+	// performed.
+	GeoIPDatabaseFilename string
+
+	// ServerIPAddress is the public IP address of the server.
+	ServerIPAddress string
+
+	// WebServerPort is the listening port of the web server.
+	// When <= 0, no web server component is run.
+	WebServerPort int
+
+	// WebServerSecret is the unique secret value that the client
+	// must supply to make requests to the web server.
+	WebServerSecret string
+
+	// WebServerCertificate is the certificate the client uses to
+	// authenticate the web server.
+	WebServerCertificate string
+
+	// WebServerPrivateKey is the private key the web server uses to
+	// authenticate itself to clients.
+	WebServerPrivateKey string
+
+	// SSHServerPort is the listening port of the SSH server.
+	// When <= 0, no SSH server component is run.
+	SSHServerPort int
+
+	// SSHPrivateKey is the SSH host key. The same key is used for
+	// both the SSH and Obfuscated SSH servers.
+	SSHPrivateKey string
+
+	// SSHServerVersion is the server version presented in the
+	// identification string. The same value is used for both SSH
+	// and Obfuscated SSH servers.
+	SSHServerVersion string
+
+	// SSHUserName is the SSH user name to be presented by the
+	// the tunnel-core client. The same value is used for both SSH
+	// and Obfuscated SSH servers.
+	SSHUserName string
+
+	// SSHPassword is the SSH password to be presented by the
+	// the tunnel-core client. The same value is used for both SSH
+	// and Obfuscated SSH servers.
+	SSHPassword string
+
+	// ObfuscatedSSHServerPort is the listening port of the Obfuscated SSH server.
+	// When <= 0, no Obfuscated SSH server component is run.
 	ObfuscatedSSHServerPort int
-	RedisServerAddress      string
+
+	// ObfuscatedSSHKey is the secret key for use in the Obfuscated
+	// SSH protocol.
+	ObfuscatedSSHKey string
+
+	// RedisServerAddress is the TCP address of a redis server. When
+	// set, redis is used to store per-session GeoIP information.
+	RedisServerAddress string
+
+	// DefaultTrafficRules specifies the traffic rules to be used when
+	// no regional-specific rules are set.
+	DefaultTrafficRules TrafficRules
+
+	// RegionalTrafficRules specifies the traffic rules for particular
+	// client regions (countries) as determined by GeoIP lookup of the
+	// client IP address. The key for each regional traffic rule entry
+	// is one or more space delimited ISO 3166-1 alpha-2 country codes.
+	RegionalTrafficRules map[string]TrafficRules
 }
 
+// TrafficRules specify the limits placed on SSH client port forward
+// traffic.
+type TrafficRules struct {
+
+	// ThrottleUpstreamSleepMilliseconds is the period to sleep
+	// between sending each chunk of client->destination traffic.
+	// The default, 0, is no sleep.
+	ThrottleUpstreamSleepMilliseconds int
+
+	// ThrottleDownstreamSleepMilliseconds is the period to sleep
+	// between sending each chunk of destination->client traffic.
+	// The default, 0, is no sleep.
+	ThrottleDownstreamSleepMilliseconds int
+
+	// IdlePortForwardTimeoutMilliseconds is the timeout period
+	// after which idle (no bytes flowing in either direction)
+	// SSH client port forwards are preemptively closed.
+	// The default, 0, is no idle timeout.
+	IdlePortForwardTimeoutMilliseconds int
+
+	// MaxClientPortForwardCount is the maximum number of port
+	// forwards each client may have open concurrently.
+	// The default, 0, is no maximum.
+	MaxClientPortForwardCount int
+}
+
+// RunWebServer indicates whether to run a web server component.
 func (config *Config) RunWebServer() bool {
 	return config.WebServerPort > 0
 }
 
+// RunSSHServer indicates whether to run an SSH server component.
 func (config *Config) RunSSHServer() bool {
 	return config.SSHServerPort > 0
 }
 
+// RunObfuscatedSSHServer indicates whether to run an Obfuscated SSH server component.
 func (config *Config) RunObfuscatedSSHServer() bool {
 	return config.ObfuscatedSSHServerPort > 0
 }
 
+// UseRedis indicates whether to store per-session GeoIP information in
+// redis. This is for integration with the legacy psi_web component.
 func (config *Config) UseRedis() bool {
 	return config.RedisServerAddress != ""
 }
 
-func LoadConfig(configJson []byte) (*Config, error) {
+// UseFail2Ban indicates whether to log client IP addresses, in authentication
+// failure cases, to the local syslog service AUTH facility for use by fail2ban.
+func (config *Config) UseFail2Ban() bool {
+	return config.Fail2BanFormat != ""
+}
 
+// GetTrafficRules looks up the traffic rules for the specified country. If there
+// are no RegionalTrafficRules for the country, DefaultTrafficRules are returned.
+func (config *Config) GetTrafficRules(targetCountryCode string) TrafficRules {
+	// TODO: faster lookup?
+	for countryCodes, trafficRules := range config.RegionalTrafficRules {
+		for _, countryCode := range strings.Split(countryCodes, " ") {
+			if countryCode == targetCountryCode {
+				return trafficRules
+			}
+		}
+	}
+	return config.DefaultTrafficRules
+}
+
+// LoadConfig loads and validates a JSON encoded server config. If more than one
+// JSON config is specified, then all are loaded and values are merged together,
+// in order. Multiple configs allows for use cases like storing static, server-specific
+// values in a base config while also deploying network-wide throttling settings
+// in a secondary file that can be paved over on all server hosts.
+func LoadConfig(configJSONs [][]byte) (*Config, error) {
+
+	// Note: default values are set in GenerateConfig
 	var config Config
-	err := json.Unmarshal(configJson, &config)
-	if err != nil {
-		return nil, psiphon.ContextError(err)
+
+	for _, configJSON := range configJSONs {
+		err := json.Unmarshal(configJSON, &config)
+		if err != nil {
+			return nil, psiphon.ContextError(err)
+		}
 	}
 
-	// TODO: config field validation
-	// TODO: validation case: OSSH requires extra fields
+	if config.Fail2BanFormat != "" && strings.Count(config.Fail2BanFormat, "%s") != 1 {
+		return nil, errors.New("Fail2BanFormat must have one '%%s' placeholder")
+	}
+
+	if config.ServerIPAddress == "" {
+		return nil, errors.New("ServerIPAddress is missing from config file")
+	}
+
+	if config.WebServerPort > 0 && (config.WebServerSecret == "" || config.WebServerCertificate == "" ||
+		config.WebServerPrivateKey == "") {
+
+		return nil, errors.New(
+			"web server requires WebServerSecret, WebServerCertificate, WebServerPrivateKey")
+	}
+
+	if config.SSHServerPort > 0 && (config.SSHPrivateKey == "" || config.SSHServerVersion == "" ||
+		config.SSHUserName == "" || config.SSHPassword == "") {
+
+		return nil, errors.New(
+			"SSH server requires SSHPrivateKey, SSHServerVersion, SSHUserName, SSHPassword")
+	}
+
+	if config.ObfuscatedSSHServerPort > 0 && (config.SSHPrivateKey == "" || config.SSHServerVersion == "" ||
+		config.SSHUserName == "" || config.SSHPassword == "" || config.ObfuscatedSSHKey == "") {
+
+		return nil, errors.New(
+			"Obfuscated SSH server requires SSHPrivateKey, SSHServerVersion, SSHUserName, SSHPassword, ObfuscatedSSHKey")
+	}
 
 	return &config, nil
 }
 
+// GenerateConfigParams specifies customizations to be applied to
+// a generated server config.
 type GenerateConfigParams struct {
-	ServerIPAddress         string
-	WebServerPort           int
-	SSHServerPort           int
+
+	// ServerIPAddress is the public IP address of the server.
+	ServerIPAddress string
+
+	// WebServerPort is the listening port of the web server.
+	// When <= 0, no web server component is run.
+	WebServerPort int
+
+	// SSHServerPort is the listening port of the SSH server.
+	// When <= 0, no SSH server component is run.
+	SSHServerPort int
+
+	// ObfuscatedSSHServerPort is the listening port of the Obfuscated SSH server.
+	// When <= 0, no Obfuscated SSH server component is run.
 	ObfuscatedSSHServerPort int
 }
 
+// GenerateConfig create a new Psiphon server config. It returns a JSON
+// encoded config and a client-compatible "server entry" for the server. It
+// generates all necessary secrets and key material, which are emitted in
+// the config file and server entry as necessary.
 func GenerateConfig(params *GenerateConfigParams) ([]byte, []byte, error) {
 
 	// TODO: support disabling web server or a subset of protocols
@@ -206,9 +395,9 @@ func GenerateConfig(params *GenerateConfigParams) ([]byte, []byte, error) {
 
 	config := &Config{
 		LogLevel:                DEFAULT_LOG_LEVEL,
-		SyslogAddress:           "",
 		SyslogFacility:          "",
-		SyslogTag:               "",
+		SyslogTag:               DEFAULT_SYSLOG_TAG,
+		Fail2BanFormat:          "",
 		DiscoveryValueHMACKey:   "",
 		GeoIPDatabaseFilename:   DEFAULT_GEO_IP_DATABASE_FILENAME,
 		ServerIPAddress:         serverIPaddress,
