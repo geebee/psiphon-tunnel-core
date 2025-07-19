@@ -16,8 +16,6 @@ github.com/OneOfOne/xxhash v1.2.2 h1:KMrpdQIwFcEqXDklaen+P1axHaj9BSKzvpUUfnHldSE
 github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=
 github.com/Psiphon-Inc/rotate-safe-writer v0.0.0-20210303140923-464a7a37606e h1:NPfqIbzmijrl0VclX2t8eO5EPBhqe47LLGKpRrcVjXk=
 github.com/Psiphon-Inc/rotate-safe-writer v0.0.0-20210303140923-464a7a37606e/go.mod h1:ZdY5pBfat/WVzw3eXbIf7N1nZN0XD5H5+X8ZMDWbCs4=
-github.com/Psiphon-Inc/uds-ipc v0.0.0-20250802061858-e91f1d61e2d0 h1:OyWZQMFdNriUfEH/1z5TUXU/TtyJf6AonouD126JSMg=
-github.com/Psiphon-Inc/uds-ipc v0.0.0-20250802061858-e91f1d61e2d0/go.mod h1:CCHVYWXdSI54oO6LpeT1IcNgZDXVKEf+edx5sbBoNMc=
 github.com/Psiphon-Inc/uds-ipc v0.0.0-20250822204344-87c23a3c91a8 h1:t7qZueEKs7WI1wHVQfsIGwOvZhMCdW3/F8qfVz7tv4w=
 github.com/Psiphon-Inc/uds-ipc v0.0.0-20250822204344-87c23a3c91a8/go.mod h1:CCHVYWXdSI54oO6LpeT1IcNgZDXVKEf+edx5sbBoNMc=
 github.com/Psiphon-Labs/bolt v0.0.0-20200624191537-23cedaef7ad7 h1:Hx/NCZTnvoKZuIBwSmxE58KKoNLXIGG6hBJYN7pj9Ag=
